@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Session Viewer</title>
+<style>
+  :root {
+    --bg: #1a1b1e; --panel: #222327; --panel2: #26272c; --border: #35363c;
+    --text: #e8e8ea; --dim: #9a9ba2; --accent: #d97757;
+    --user-bg: #2d3a4a; --tool-bg: #26272c; --think: #7a7b83;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: -apple-system, "Hiragino Sans", sans-serif;
+    background: var(--bg); color: var(--text); height: 100vh;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+  }
+  header h1 { font-size: 15px; font-weight: 600; }
+  header h1 span { color: var(--accent); }
+  header .hint { color: var(--dim); font-size: 12px; margin-left: auto; }
+  main { flex: 1; display: flex; min-height: 0; }
+
+  .col { overflow-y: auto; border-right: 1px solid var(--border); }
+  #projects { width: 240px; flex-shrink: 0; background: var(--panel); }
+  #sessions { width: 320px; flex-shrink: 0; background: var(--panel2); }
+  #conversation { flex: 1; border-right: none; padding: 16px 20px 60px; }
+
+  .col-title {
+    position: sticky; top: 0; background: inherit; padding: 10px 14px 6px;
+    font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em;
+  }
+  .item { padding: 10px 14px; cursor: pointer; border-bottom: 1px solid var(--border); position: relative; }
+  .item .fav {
+    position: absolute; top: 8px; right: 10px; cursor: pointer;
+    color: var(--dim); font-size: 14px; line-height: 1; padding: 2px;
+  }
+  .item .fav:hover, .item .fav.on { color: #f5c542; }
+  .item .copy {
+    position: absolute; top: 8px; right: 32px; cursor: pointer;
+    color: var(--dim); font-size: 12px; line-height: 1.2; padding: 2px;
+  }
+  .item .copy:hover { color: var(--accent); }
+  #projects .fav-row .name { color: #f5c542; }
+  #projects .search-row .name { color: var(--accent); }
+  .search-row .close {
+    position: absolute; top: 8px; right: 10px; cursor: pointer;
+    color: var(--dim); font-size: 14px; line-height: 1; padding: 2px 4px;
+  }
+  .search-row .close:hover { color: #e5645a; }
+
+  /* 会話を一番下までスクロールするボタン */
+  #toBottom {
+    position: fixed; right: 24px; bottom: 24px; z-index: 10;
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    font-size: 16px; cursor: pointer; display: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,.4);
+  }
+  #toBottom.show { display: block; }
+  #toBottom:hover { background: var(--accent); color: #1a1b1e; border-color: var(--accent); }
+  .item:hover { background: rgba(255,255,255,.04); }
+  .item.active { background: rgba(217,119,87,.14); border-left: 3px solid var(--accent); padding-left: 11px; }
+  .item .name { font-size: 13px; word-break: break-all; padding-right: 44px; }
+  .item .meta { font-size: 11px; color: var(--dim); margin-top: 3px; }
+  .item .preview { font-size: 12px; color: var(--dim); margin-top: 3px; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+  .thread { width: 100%; }
+  .msg { margin-bottom: 14px; display: flex; flex-direction: column; align-items: flex-start; }
+  .msg .who { font-size: 11px; color: var(--dim); margin-bottom: 4px; }
+  .bubble {
+    padding: 10px 14px; border-radius: 10px; font-size: 13.5px; line-height: 1.65;
+    white-space: pre-wrap; word-break: break-word; max-width: 100%;
+  }
+  /* ユーザーの発言はチャット風に右寄せ */
+  .msg.user, .msg.command { align-items: flex-end; margin-left: auto; }
+  .user .bubble { background: var(--user-bg); border-bottom-right-radius: 4px; max-width: 85%; }
+  .assistant .bubble { background: var(--panel); border: 1px solid var(--border); }
+  .thinking .bubble { background: none; border: 1px dashed var(--border); color: var(--think); font-size: 12.5px; }
+  .summary .bubble { background: none; border: 1px solid var(--accent); color: var(--dim); font-size: 12.5px; }
+  .command .bubble { background: none; border: none; color: var(--accent); font-family: ui-monospace, monospace; font-size: 12.5px; padding: 2px 0; }
+
+  details.tool { margin-bottom: 10px; }
+  details.tool summary {
+    cursor: pointer; font-size: 12.5px; color: var(--dim);
+    padding: 6px 10px; background: var(--tool-bg); border: 1px solid var(--border);
+    border-radius: 8px; list-style: none; display: flex; gap: 8px; align-items: baseline;
+  }
+  details.tool summary::before { content: "▸"; color: var(--accent); }
+  details.tool[open] summary::before { content: "▾"; }
+  details.tool summary .tname { color: var(--text); font-weight: 600; }
+  details.tool summary .tsum { font-family: ui-monospace, monospace; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  details.tool summary .err { color: #e5645a; }
+  details.system summary { border-style: dashed; }
+  details.system summary .tname { color: var(--think); font-weight: 400; font-style: italic; }
+  details.tool .tool-body {
+    border: 1px solid var(--border); border-top: none; border-radius: 0 0 8px 8px;
+    padding: 10px; font-size: 12px;
+  }
+  details.tool .tool-body h4 { font-size: 11px; color: var(--dim); margin: 8px 0 4px; }
+  details.tool .tool-body h4:first-child { margin-top: 0; }
+  pre {
+    background: #141518; border-radius: 6px; padding: 10px; overflow-x: auto;
+    font-family: ui-monospace, "SF Mono", monospace; font-size: 12px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .bubble pre { margin: 6px 0; }
+  code { font-family: ui-monospace, monospace; background: #141518; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .empty { color: var(--dim); padding: 40px; text-align: center; font-size: 13px; }
+
+  /* Markdownレンダリング済みバブル */
+  .bubble.md { white-space: normal; }
+  .bubble.md > :first-child { margin-top: 0; }
+  .bubble.md > :last-child { margin-bottom: 0; }
+  .bubble.md p, .bubble.md ul, .bubble.md ol, .bubble.md pre, .bubble.md table,
+  .bubble.md blockquote { margin: 8px 0; }
+  .bubble.md h1, .bubble.md h2, .bubble.md h3, .bubble.md h4 {
+    margin: 16px 0 8px; line-height: 1.4; font-weight: 600;
+  }
+  .bubble.md h1 { font-size: 17px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  .bubble.md h2 { font-size: 15.5px; }
+  .bubble.md h3 { font-size: 14px; }
+  .bubble.md h4 { font-size: 13.5px; color: var(--dim); }
+  .bubble.md ul, .bubble.md ol { padding-left: 22px; }
+  .bubble.md li { margin: 3px 0; }
+  .bubble.md li > ul, .bubble.md li > ol { margin: 3px 0; }
+  .bubble.md a { color: var(--accent); }
+  .bubble.md blockquote {
+    border-left: 3px solid var(--border); padding: 2px 12px; color: var(--dim);
+  }
+  .bubble.md table { border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%; }
+  .bubble.md th, .bubble.md td { border: 1px solid var(--border); padding: 5px 10px; font-size: 12.5px; }
+  .bubble.md th { background: rgba(255,255,255,.05); font-weight: 600; }
+  .bubble.md hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+  .bubble.md img { max-width: 100%; }
+  label.sc { font-size: 12px; color: var(--dim); display: flex; gap: 5px; align-items: center; cursor: pointer; }
+
+  /* 検索 */
+  header input[type="search"] {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); padding: 5px 10px; font-size: 12.5px; width: 230px; outline: none;
+  }
+  header input[type="search"]:focus { border-color: var(--accent); }
+  mark { background: var(--accent); color: #1a1b1e; border-radius: 3px; padding: 0 2px; }
+  .result { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; max-width: 900px; }
+  .result .snippet { font-size: 12px; color: var(--dim); margin-top: 4px; line-height: 1.5; }
+  .result .snippet .k { color: var(--accent); margin-right: 4px; }
+  .search-head { color: var(--dim); font-size: 12.5px; margin: 4px 0 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>◆</span> Claude Session Viewer</h1>
+  <input type="search" id="q" placeholder="全セッション検索 (Enter)">
+  <label class="sc"><input type="checkbox" id="showSteps"> 途中の応答を表示</label>
+  <label class="sc"><input type="checkbox" id="showSystem"> システム注入を表示</label>
+  <label class="sc"><input type="checkbox" id="showTools"> ツール操作を表示</label>
+  <label class="sc"><input type="checkbox" id="sidechain"> サブエージェントも表示</label>
+  <div class="hint">~/.claude/projects/ (読み取り専用)</div>
+</header>
+<button id="toBottom" title="一番下へ">↓</button>
+<main>
+  <div class="col" id="projects"><div class="col-title">プロジェクト</div></div>
+  <div class="col" id="sessions"><div class="col-title">セッション</div><div class="empty">プロジェクトを選択</div></div>
+  <div class="col" id="conversation"><div class="empty">セッションを選択すると会話が表示されます</div></div>
+</main>
+<script src="marked.min.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let state = { project: null, session: null, highlight: null, favSet: new Set() };
+
+const favKey = (project, id) => project + '/' + id;
+
+async function loadFavorites() {
+  const favs = await api('/api/favorites');
+  state.favSet = new Set(favs.map((f) => favKey(f.project, f.id)));
+  const count = $('#favCount');
+  if (count) count.textContent = `${state.favSet.size} セッション`;
+  return favs;
+}
+
+// Claude Codeでセッションを再開するコマンド
+const shellQuote = (s) => "'" + s.replace(/'/g, "'\\''") + "'";
+function resumeCommand(cwd, id) {
+  return cwd ? `cd ${shellQuote(cwd)} && claude --resume ${id}` : `claude --resume ${id}`;
+}
+
+async function copyText(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // WKWebView(file://)等でClipboard APIが使えない場合のフォールバック
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  if (btn) {
+    const orig = btn.textContent;
+    btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = orig; }, 1200);
+  }
+}
+
+// セッション一覧アイテムに⧉(再開コマンドコピー)ボタンを付ける共通処理
+function attachCopyButton(div, cwd, id) {
+  const btn = div.querySelector('.copy');
+  if (!btn) return;
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    copyText(resumeCommand(cwd, id), btn);
+  };
+}
+
+async function toggleFav(project, id, btn) {
+  const on = !state.favSet.has(favKey(project, id));
+  const favs = await api(`/api/favorite?project=${encodeURIComponent(project)}&id=${encodeURIComponent(id)}&on=${on ? 1 : 0}`);
+  state.favSet = new Set(favs.map((f) => favKey(f.project, f.id)));
+  if (btn) {
+    btn.classList.toggle('on', on);
+    btn.textContent = on ? '★' : '☆';
+  }
+  const count = $('#favCount');
+  if (count) count.textContent = `${state.favSet.size} セッション`;
+}
+
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// ``` コードブロックと `inline code` だけの最小マークダウン(ユーザー入力用)
+function renderText(raw) {
+  const parts = raw.split(/```(\w*)\n?/);
+  let html = '', inCode = false;
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 1) { inCode = !inCode; continue; } // 言語名部分
+    if (inCode) html += '<pre>' + esc(parts[i].replace(/\n$/, '')) + '</pre>';
+    else html += esc(parts[i]).replace(/`([^`\n]+)`/g, '<code>$1</code>');
+    if (i % 2 === 0 && i + 1 < parts.length) inCode = !inCode;
+  }
+  return html;
+}
+
+// トランスクリプト内の生HTMLは実行させない(prompt injection経由のXSS対策)。
+// Markdown由来の装飾(テーブル・コードブロック等)はそのまま効く
+marked.use({
+  renderer: {
+    html(token) {
+      const t = typeof token === 'string' ? token : (token.text ?? '');
+      return esc(t);
+    },
+  },
+});
+
+// Claudeの応答はMarkdownとしてフルレンダリング
+function renderMarkdown(raw) {
+  try {
+    return marked.parse(raw, { breaks: true, gfm: true });
+  } catch {
+    return renderText(raw);
+  }
+}
+
+function fmtDate(ms) {
+  const d = new Date(ms);
+  return d.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+function fmtSize(b) {
+  return b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.round(b / 1e3) + ' KB';
+}
+// プロジェクトの表示名。実パス(cwd)があればホームを~に縮めて使う。
+// フォールバックのディレクトリ名はハイフン化されていて区切りが曖昧なのでそのまま出す
+function projLabel(cwd, dirName) {
+  if (cwd) return cwd.replace(/^\/(Users|home)\/[^/]+/, '~');
+  return dirName.replace(/^-/, '/').replace(/-/g, '/');
+}
+
+// Macアプリ(WKWebView)内ではネイティブブリッジ経由、ブラウザではHTTP経由でAPIを呼ぶ
+const bridgePending = {};
+let bridgeSeq = 0;
+window.__apiResolve = (id, obj) => {
+  const resolve = bridgePending[id];
+  delete bridgePending[id];
+  if (resolve) resolve(obj);
+};
+async function api(path) {
+  if (window.webkit?.messageHandlers?.api) {
+    return new Promise((resolve) => {
+      const id = ++bridgeSeq;
+      bridgePending[id] = resolve;
+      window.webkit.messageHandlers.api.postMessage({ id, path });
+    });
+  }
+  const r = await fetch(path);
+  return r.json();
+}
+
+async function loadProjects() {
+  const [projects] = await Promise.all([api('/api/projects'), loadFavorites()]);
+  const el = $('#projects');
+  el.innerHTML = '<div class="col-title">プロジェクト</div>';
+  const favRow = document.createElement('div');
+  favRow.className = 'item fav-row';
+  favRow.innerHTML = `<div class="name">★ お気に入り</div>
+    <div class="meta" id="favCount">${state.favSet.size} セッション</div>`;
+  favRow.onclick = () => showFavorites(favRow);
+  el.appendChild(favRow);
+  for (const p of projects) {
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.dataset.name = p.name;
+    div.innerHTML = `<div class="name">${esc(projLabel(p.cwd, p.name))}</div>
+      <div class="meta">${p.count} セッション · ${fmtDate(p.lastModified)}</div>`;
+    div.onclick = () => selectProject(p.name, div);
+    el.appendChild(div);
+  }
+}
+
+async function selectProject(name, div) {
+  state.project = name;
+  document.querySelectorAll('#projects .item').forEach((d) => d.classList.toggle('active', d === div));
+  const el = $('#sessions');
+  el.innerHTML = '<div class="col-title">セッション</div><div class="empty">読み込み中…</div>';
+  const sessions = await api('/api/sessions?project=' + encodeURIComponent(name));
+  el.innerHTML = '<div class="col-title">セッション</div>';
+  if (!sessions.length) el.innerHTML += '<div class="empty">セッションなし</div>';
+  for (const s of sessions) {
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.dataset.id = s.id;
+    const on = state.favSet.has(favKey(name, s.id));
+    div.innerHTML = `<span class="fav${on ? ' on' : ''}" title="お気に入り">${on ? '★' : '☆'}</span>
+      <span class="copy" title="再開コマンドをコピー">⧉</span>
+      <div class="name">${esc(s.title || s.firstPrompt || s.id.slice(0, 8) + '…')}</div>
+      <div class="meta">${fmtDate(s.mtime)} · ${fmtSize(s.size)}</div>
+      ${s.firstPrompt && s.title ? `<div class="preview">${esc(s.firstPrompt)}</div>` : ''}`;
+    div.querySelector('.fav').onclick = (e) => {
+      e.stopPropagation();
+      toggleFav(name, s.id, e.target);
+    };
+    attachCopyButton(div, s.cwd, s.id);
+    div.onclick = () => selectSession(s.id, div);
+    el.appendChild(div);
+  }
+}
+
+// お気に入りセッション一覧をセッションカラムに表示
+async function showFavorites(rowDiv) {
+  state.project = null;
+  document.querySelectorAll('#projects .item').forEach((d) => d.classList.toggle('active', d === rowDiv));
+  const el = $('#sessions');
+  el.innerHTML = '<div class="col-title">お気に入り</div>';
+  const favs = await loadFavorites();
+  if (!favs.length) {
+    el.innerHTML += '<div class="empty">セッション一覧の☆を押すと<br>ここに登録されます</div>';
+    return;
+  }
+  for (const f of favs) {
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.dataset.id = f.id;
+    div.innerHTML = `<span class="fav on" title="お気に入り解除">★</span>
+      ${f.missing ? '' : '<span class="copy" title="再開コマンドをコピー">⧉</span>'}
+      <div class="name">${esc(f.title || f.id.slice(0, 8) + '…')}${f.missing ? ' (削除済み)' : ''}</div>
+      <div class="meta">${esc(projLabel(f.cwd, f.project))}${f.mtime ? ' · ' + fmtDate(f.mtime) : ''}</div>`;
+    div.querySelector('.fav').onclick = async (e) => {
+      e.stopPropagation();
+      await toggleFav(f.project, f.id);
+      showFavorites(rowDiv);
+    };
+    attachCopyButton(div, f.cwd, f.id);
+    if (!f.missing) div.onclick = () => openSession(f.project, f.id, null);
+    el.appendChild(div);
+  }
+}
+
+async function selectSession(id, div, highlight = null) {
+  state.session = id;
+  state.highlight = highlight;
+  document.querySelectorAll('#sessions .item').forEach((d) => d.classList.toggle('active', d === div));
+  renderConversation();
+}
+
+async function renderConversation() {
+  if (!state.project || !state.session) return;
+  const el = $('#conversation');
+  el.innerHTML = '<div class="empty">読み込み中…</div>';
+  const sc = $('#sidechain').checked ? '&sidechain=1' : '';
+  const messages = await api(`/api/session?project=${encodeURIComponent(state.project)}&id=${encodeURIComponent(state.session)}${sc}`);
+  el.innerHTML = '';
+  if (messages.error) { el.innerHTML = `<div class="empty">${esc(messages.error)}</div>`; return; }
+  const th = document.createElement('div');
+  th.className = 'thread';
+  el.appendChild(th);
+  const showTools = $('#showTools').checked;
+  const showSteps = $('#showSteps').checked;
+  const showSystem = $('#showSystem').checked;
+
+  // ターン(ユーザー入力〜次の入力の前)ごとに最後のassistantメッセージを特定
+  const finalAssistant = new Set();
+  let lastInTurn = -1;
+  const closeTurn = () => { if (lastInTurn >= 0) finalAssistant.add(lastInTurn); lastInTurn = -1; };
+  messages.forEach((m, i) => {
+    if (m.kind === 'user' || m.kind === 'command') closeTurn();
+    if (m.kind === 'assistant') lastInTurn = i;
+  });
+  closeTurn();
+
+  for (const [i, m] of messages.entries()) {
+    if (!showSteps) {
+      if (m.kind === 'thinking') continue;
+      if (m.kind === 'assistant' && !finalAssistant.has(i)) continue;
+    }
+    if (m.kind === 'system') {
+      if (!showSystem) continue;
+      const d = document.createElement('details');
+      d.className = 'tool system';
+      d.innerHTML = `<summary><span class="tname">system</span>
+          <span class="tsum">${esc(m.label)}: ${esc((m.text || '').split('\n')[0].slice(0, 100))}</span></summary>
+        <div class="tool-body"><pre>${esc(m.text || '')}</pre></div>`;
+      th.appendChild(d);
+      continue;
+    }
+    if (m.kind === 'tool') {
+      if (!showTools) continue;
+      const d = document.createElement('details');
+      d.className = 'tool';
+      d.innerHTML = `<summary><span class="tname">${esc(m.name)}</span>
+          <span class="tsum">${esc(m.inputSummary || '')}</span>
+          ${m.isError ? '<span class="err">error</span>' : ''}</summary>
+        <div class="tool-body">
+          <h4>入力</h4><pre>${esc(m.input || '')}</pre>
+          ${m.result ? `<h4>結果</h4><pre>${esc(m.result)}</pre>` : ''}
+        </div>`;
+      th.appendChild(d);
+      continue;
+    }
+    const div = document.createElement('div');
+    div.className = 'msg ' + m.kind;
+    const who = { user: 'ユーザー', assistant: 'Claude' + (m.sidechain ? ' (subagent)' : ''), thinking: 'thinking', summary: '要約', command: '' }[m.kind] ?? m.kind;
+    const isMd = m.kind === 'assistant';
+    const body = m.kind === 'command' ? esc(m.text) : isMd ? renderMarkdown(m.text) : renderText(m.text);
+    div.innerHTML = `${who ? `<div class="who">${esc(who)}${m.ts ? ' · ' + fmtDate(Date.parse(m.ts)) : ''}</div>` : ''}
+      <div class="bubble${isMd ? ' md' : ''}">${body}</div>`;
+    th.appendChild(div);
+  }
+  el.scrollTop = 0;
+  requestAnimationFrame(updateToBottomButton);
+
+  // 検索から開いた場合はヒット箇所をハイライトして最初のヒットへスクロール
+  if (state.highlight) {
+    highlightIn(th, state.highlight);
+    const first = th.querySelector('mark');
+    if (first) {
+      first.scrollIntoView({ block: 'center' });
+    } else if (!$('#showSteps').checked) {
+      // ヒットが途中経過の応答に隠れている場合は自動で表示を広げて再描画
+      $('#showSteps').checked = true;
+      return renderConversation();
+    }
+  }
+}
+
+// root配下のテキストノード内のqを<mark>で囲む
+function highlightIn(root, q) {
+  const needle = q.toLowerCase();
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) {
+    if (walker.currentNode.nodeValue.toLowerCase().includes(needle)) nodes.push(walker.currentNode);
+  }
+  for (const n of nodes) {
+    const frag = document.createDocumentFragment();
+    let text = n.nodeValue, i;
+    while ((i = text.toLowerCase().indexOf(needle)) >= 0) {
+      frag.appendChild(document.createTextNode(text.slice(0, i)));
+      const mark = document.createElement('mark');
+      mark.textContent = text.slice(i, i + q.length);
+      frag.appendChild(mark);
+      text = text.slice(i + q.length);
+    }
+    frag.appendChild(document.createTextNode(text));
+    n.parentNode.replaceChild(frag, n);
+  }
+}
+
+// esc + 検索語の<mark>付け(スニペット用)
+function markSnippet(text, q) {
+  const lower = text.toLowerCase(), nl = q.toLowerCase();
+  const parts = [];
+  let i = 0, j;
+  while ((j = lower.indexOf(nl, i)) >= 0) {
+    parts.push(esc(text.slice(i, j)), '<mark>' + esc(text.slice(j, j + q.length)) + '</mark>');
+    i = j + q.length;
+  }
+  parts.push(esc(text.slice(i)));
+  return parts.join('');
+}
+
+// 検索結果はプロジェクト欄に「🔍 <検索語>」の擬似プロジェクトとして積まれる
+const searchEntries = new Map(); // q → {q, row, sessions}
+
+async function runSearch() {
+  const q = $('#q').value.trim();
+  if (q.length < 2) return;
+  const data = await api('/api/search?q=' + encodeURIComponent(q));
+  if (data.error) return;
+  let entry = searchEntries.get(q);
+  if (!entry) {
+    const row = document.createElement('div');
+    row.className = 'item search-row';
+    entry = { q, row, sessions: data.sessions };
+    searchEntries.set(q, entry);
+    document.querySelector('#projects .fav-row').after(row);
+    row.onclick = () => showSearchResults(entry);
+  } else {
+    entry.sessions = data.sessions;
+  }
+  const total = data.sessions.reduce((a, s) => a + s.count, 0);
+  entry.row.innerHTML = `<span class="close" title="この検索結果を削除">×</span>
+    <div class="name">🔍 ${esc(q)}</div>
+    <div class="meta">${data.sessions.length} セッション / ${total}件ヒット</div>`;
+  entry.row.querySelector('.close').onclick = (e) => {
+    e.stopPropagation();
+    const wasActive = entry.row.classList.contains('active');
+    searchEntries.delete(entry.q);
+    entry.row.remove();
+    if (wasActive) {
+      $('#sessions').innerHTML = '<div class="col-title">セッション</div><div class="empty">プロジェクトを選択</div>';
+    }
+  };
+  showSearchResults(entry);
+  $('#q').blur();
+}
+
+// 検索結果をセッションカラムに一覧表示(会話を開いても一覧は残る)
+function showSearchResults(entry) {
+  state.project = null;
+  document.querySelectorAll('#projects .item').forEach((d) => d.classList.toggle('active', d === entry.row));
+  const el = $('#sessions');
+  el.innerHTML = `<div class="col-title">検索: ${esc(entry.q)}</div>`;
+  if (!entry.sessions.length) {
+    el.innerHTML += '<div class="empty">ヒットなし</div>';
+    return;
+  }
+  for (const s of entry.sessions) {
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.dataset.id = s.id;
+    const on = state.favSet.has(favKey(s.project, s.id));
+    div.innerHTML = `<span class="fav${on ? ' on' : ''}" title="お気に入り">${on ? '★' : '☆'}</span>
+      <span class="copy" title="再開コマンドをコピー">⧉</span>
+      <div class="name">${esc(s.title || s.id.slice(0, 8) + '…')}</div>
+      <div class="meta">${esc(projLabel(s.cwd, s.project))} · ${fmtDate(s.mtime)} · ${s.count}件ヒット</div>
+      <div class="preview">${markSnippet(s.matches[0]?.snippet || '', entry.q)}</div>`;
+    div.querySelector('.fav').onclick = (e) => {
+      e.stopPropagation();
+      toggleFav(s.project, s.id, e.target);
+    };
+    attachCopyButton(div, s.cwd, s.id);
+    div.onclick = () => {
+      state.project = s.project;
+      selectSession(s.id, div, entry.q);
+    };
+    el.appendChild(div);
+  }
+}
+
+// 検索結果から該当セッションを開く(左のリストの選択状態も同期)
+async function openSession(project, id, q) {
+  if (state.project !== project) {
+    const pdiv = document.querySelector(`#projects .item[data-name="${CSS.escape(project)}"]`);
+    await selectProject(project, pdiv);
+  }
+  const sdiv = [...document.querySelectorAll('#sessions .item')].find((d) => d.dataset.id === id);
+  await selectSession(id, sdiv, q);
+}
+
+$('#sidechain').onchange = renderConversation;
+$('#showTools').onchange = renderConversation;
+$('#showSteps').onchange = renderConversation;
+$('#showSystem').onchange = renderConversation;
+// 会話が下端以外にあるときだけ「一番下へ」ボタンを出す
+const conv = $('#conversation');
+function updateToBottomButton() {
+  const scrollable = conv.scrollHeight > conv.clientHeight + 100;
+  const nearBottom = conv.scrollTop + conv.clientHeight >= conv.scrollHeight - 60;
+  $('#toBottom').classList.toggle('show', scrollable && !nearBottom);
+}
+conv.addEventListener('scroll', updateToBottomButton);
+$('#toBottom').onclick = () => { conv.scrollTop = conv.scrollHeight; };
+
+$('#q').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') runSearch();
+  if (e.key === 'Escape') e.target.blur();
+});
+// ⌘F で検索ボックスにフォーカス(ブラウザのページ内検索は抑止)
+document.addEventListener('keydown', (e) => {
+  if (e.metaKey && !e.shiftKey && !e.altKey && e.key === 'f') {
+    e.preventDefault();
+    $('#q').focus();
+    $('#q').select();
+  }
+});
+loadProjects();
+</script>
+</body>
+</html>
